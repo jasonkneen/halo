@@ -23,20 +23,21 @@ environment_kwargs:
   language: python           # or cpp / c, or a list ([python, cpp]) the model picks from
   timeout_per_test: 5
   max_grading_seconds: 150
-  verdict_detail: outcome
   reasoning_effort: random
-  reasoning_effort_profiles:
-    low: {thinking_tokens: 8192, max_submissions: 1, max_test_calls: 2}
-    medium: {thinking_tokens: 12288, max_submissions: 2, max_test_calls: 4}
-    high: {thinking_tokens: 16384, max_submissions: 3, max_test_calls: 6}
+  reasoning_effort_profiles:   # thinking_tokens is the episode's total under the scope below
+    low: {thinking_tokens: 24576, max_submissions: 1, max_test_calls: 2}
+    medium: {thinking_tokens: 32768, max_submissions: 2, max_test_calls: 4}
+    high: {thinking_tokens: 36000, max_submissions: 3, max_test_calls: 6}
+rollout_max_thinking_tokens: 18000     # the most one turn may reason of it
+rollout_thinking_budget_scope: episode
 ```
 
 | Knob | Default | Effect |
 |---|---|---|
 | `language` | `python` | `python`, `cpp`, `c`, or a list the model picks from |
-| `output_comparison` | `exact` (`tokens` under `codeforces`) | `exact` is trimmed byte equality, `tokens` whitespace-token equality |
-| `verdict_detail` | `full` | `full` shows a failed test's expected and produced output; `outcome` the verdict alone |
-| `timeout_per_test` | 15 s | Per-test cap when the problem declares none; also the interpreted floor |
+| `output_comparison` | `exact` (`tokens` under `codeforces`) | `exact` is trimmed equality reading `\r\n` and `\r` as `\n` on both sides, `tokens` whitespace-token equality |
+| `verdict_detail` | `outcome` | `outcome` states a failed test's verdict class alone (the compiler's first error too, on `bubblewrap`); `full` adds its expected and produced output, exit code, output size and stderr |
+| `timeout_per_test` | 15 s | Per-test cap when the problem declares none; also the interpreted floor. It and `max_time_limit` must be finite and > 0 |
 | `max_time_limit` | 15 s | Clamp on a declared limit; below `timeout_per_test` it is refused |
 | `compiled_time_limit_scale` | `1.0` | Multiplies a compiled language's per-test limit; a non-finite or non-positive value raises at construction |
 | `max_grading_seconds` | `None` | Wall-clock budget for one grade; a non-positive value raises at construction |
@@ -45,15 +46,19 @@ environment_kwargs:
 | `stop_on_first_failure` | `false` | Stop at the first failing test; the pass fraction becomes a lower bound |
 | `max_submissions` / `max_test_calls` | 2 / 5 | Per-episode tool budgets, overridable per effort level |
 | `max_turns` | 15 | Backstop; the tool budgets are the tuning lever |
+| `eval_protocol` | `harness` | Evaluation contract; `leaderboard` pins both tool budgets ([Evaluation protocols](#evaluation-protocols)) |
 
 The objective's shape is the `environment` term's `exponent` in the top-level `rewards:` — above 1 it is convex, so half-right earns under half a solve ([Reward Terms](../rewards.md)).
+
+`sandbox_backend` / `sandbox_url` pick the [sandbox](sandbox.md#choosing-a-backend) both tools and the grader run on; one that does not confine the program, `local` included, [warns](sandbox.md#choosing-a-backend).
 
 ### Reasoning effort
 
 `reasoning_effort` defaults to `medium` here, and the class ladder sets `thinking_tokens` only: low
-4096, medium 8192, high 16384. `reasoning_effort_profiles` merges per level over it, so a profile
-naming only interaction keys keeps the class budget
-([Reasoning budget](../async-grpo/rollouts.md#reasoning-budget)). The level and its budget reach the
+4096, medium 8192, high 16384 — per turn, or the episode's total under
+`rollout_thinking_budget_scope: episode`, which then scales the floor's reference
+([Reasoning budget](../async-grpo/rollouts.md#reasoning-budget)). `reasoning_effort_profiles` merges
+per level over it, so a profile naming only interaction keys keeps the class budget. The level and its budget reach the
 model through the chat template; on Qwen3.6 that is the shipped effort template the recipes pin.
 
 This environment adds three profile keys, bound per episode:
@@ -64,12 +69,25 @@ This environment adds three profile keys, bound per episode:
 A value below its minimum raises at construction; where the level is undetermined at reset, the
 constructor's budgets stand.
 
+### Evaluation protocols
+
+`eval_protocol` names the contract a run is scored under (`EVAL_PROTOCOLS` in `code_contests.py`):
+
+- `harness` (default) pins nothing: the configured budgets stand. This is the agentic loop the recipes train, and its solve rate is attempts-until-accept within the budget.
+- `leaderboard` pins `max_submissions: 1` and `max_test_calls: 0`: one graded program per sample, the scratchpad refused. The prompt, tool-call format and grader stay this environment's, so its numbers are not a benchmark's published ones.
+
+A configured value that contradicts a pin raises at construction. An effort profile's
+`max_submissions` / `max_test_calls` are validated, then give way to the pins (logged): the level
+keeps its `thinking_tokens`, and a ladder that binds interaction still states the budgets in the task
+message ("1 graded submission, 0 scratchpad runs").
+
 ## Tools
 
 - The scratchpad — `python_repl` when the run fixes `python`, else `run_code`. It runs a program through the grading sandbox, standard library included, on the `stdin` the call supplies (empty by default), so the model can feed it the statement's sample input or its own; it never sees the graded tests. Each call is one-shot — nothing a run writes survives into the next. A run with no `stdin` that ends in an error or in no output says so in its result, since a program starved of input fails without naming the cause. Past `max_test_calls` a call is refused.
 - `submit_solution` — grades a complete stdin/stdout program against the hidden tests. The only graded channel, with no fenced-code-block fallback. Reaching `max_submissions` ends the episode.
 
-A refused call is a tool error: it pays `tool_error_penalty`, never `tool_success_reward`. With a
+A refused call is a tool error: it pays `tool_error_penalty`, never `tool_success_reward`. A
+scratchpad run that ends on a sandbox fault ends the episode ([Sandbox faults](sandbox.md#sandbox-faults)). With a
 language list both tools take a required `language` argument enumerating the set, each program is
 graded in the language its call names, and a foreign value is refused before admission. The episode
 records the last language as its `language` slice, which the trainer slices metrics by
@@ -82,17 +100,20 @@ records the last language as its `language` slice, which the trainer slices metr
 Grading goes through `grade_solution` (`src/environments/envs/tasks/coding/grading.py`), shared with
 the offline re-grader, so a checkpoint scores identically online and offline. The verdict lists
 non-passing tests only, one entry per distinct verdict with the tests that failed the same way folded
-into it, capped at five; a runtime error shows the tail of stderr, where a traceback names the
-exception. One sandbox session serves the whole grade, so a compiled
-submission builds once, reset after every test. A compile failure is graded once against the whole
-pool.
+into it, capped at five. One sandbox session serves the whole grade, so a compiled submission builds
+once, reset after every test. A compile failure is graded once against the whole pool and shows the
+compiler's first error under `full`. Under `outcome` it shows it only on `bubblewrap`, whose build
+runs once before any test, on an empty stdin, and whose program can force no rebuild. On `local` and
+`remote` it shows the class alone: a `local` program can write a test's input to a host file and
+remove its working directory, forcing a rebuild that includes the file, and a `remote` build shares
+each test's request with its stdin.
 
-- **Comparison.** Byte-exact equality spuriously fails correct Codeforces solutions, hence the `codeforces` preset. Token comparison accepts real-valued tokens within a 1e-6 relative tolerance, gated on a float-looking *expected* token, so integer answers stay exact.
-- **Verdict detail.** Under `full`, a second submission turns the judge into a free test oracle — probing out-earns scratchpad testing within a group. The recipes use `outcome`.
+- **Comparison.** `exact` comparison spuriously fails correct Codeforces solutions, hence the `codeforces` preset. Token comparison accepts real-valued tokens within a 1e-6 relative tolerance, gated on a float-looking *expected* token, so integer answers stay exact.
+- **Verdict detail.** `outcome` shows each failed test's verdict class (`FAIL`, `RUNTIME ERROR`, `TIME LIMIT EXCEEDED`, `OUTPUT LIMIT EXCEEDED`, `COMPILATION ERROR`, and `ERROR` for a test lost to infra, whose text goes to the log) and, save the compiler's first error on `bubblewrap`, nothing beyond it: stderr, an exit code and an output size can each carry the hidden input the program read. Which tests fail, and with which class, still reaches the policy; `stop_on_first_failure` narrows that to the first failing test, the Codeforces contract. `full` adds them (stderr as its tail, where a traceback names the exception), an infra error's text and a wrong answer's expected and produced output; a second submission then turns the judge into a free test oracle, and probing out-earns scratchpad testing within a group. Scratchpad runs on the model's own inputs show their output in both modes.
 - **Time limits.** The payload's `time_limit` is the per-test cap, else `timeout_per_test`. An interpreted language is floored at `timeout_per_test`, so a C++-tuned limit cannot fail a correct CPython solution; a compiled one is scaled by `compiled_time_limit_scale`. Both are clamped to `max_time_limit`, per graded language.
 - **Grading budget.** Tests run sequentially, so a several-hundred-test problem stalls the round. `max_grading_seconds` is checked between tests and keeps the full pool as denominator — an ungraded test counts as failed, so size it for an honest solution (the recipes: 150 s). `episode/tests_graded_frac` shows a partial grade.
 - **Special judges.** A per-problem `checker` (Python) in the payload overrides comparison: `python checker.py input.txt correct_output.txt solution_output.txt`, accepted only when it exits cleanly and its last stdout token is `1`. It runs at the 15 s infra default, never the solution's limit.
-- **Infra errors.** A grade that hit a backend error with no test running cleanly or passing marks the episode invalid, so the trainer drops it from the group baseline rather than teaching a wrong answer (`episode/grading_infra_outage`).
+- **Infra errors.** A grade that hit a backend error with no test running cleanly or passing marks the episode invalid, so the trainer drops it from the group baseline rather than teaching a wrong answer (`episode/grading_infra_outage`). A build past the compile limit is a compile error, a program that replaces its working directory a runtime error, one that floods its output an output-limit or runtime error, and one that removes its working directory runs the next test in a fresh one: verdicts, not infra. The routes a program still has into an infra error are listed under [Sandbox faults](sandbox.md#sandbox-faults).
 
 ### Reward ladder
 
@@ -160,7 +181,7 @@ Adapters (`src/environments/envs/tasks/coding/datasets.py`) map a source's rows 
 | `codeforces` | `open-r1/codeforces` | RL pool | `verifiable` config; `generated_checker` judges; interactive rows dropped; generated tests join via `--tests_table` |
 | `hardtests` | `sigcp/hardtests_problems` + `_tests` | RL pool | Difficulty mapped to Codeforces ratings; needs `--tests_table`; judging function becomes the checker |
 | `deepcoder` | `agentica-org/DeepCoder-Preview-Dataset` | RL pool | stdin/stdout tests; functional specs skipped; no report bucket |
-| `livecodebench` | `livecodebench/code_generation_lite` | benchmark | Release `test*.jsonl` read directly, newest first; functional rows skipped |
+| `livecodebench` | `livecodebench/code_generation_lite` | benchmark | Release `test*.jsonl` read directly, newest file first; functional rows skipped; contest-date window and platform filter |
 | `icpc` | `RUC-AIBOX/ICPC-Eval` | benchmark | Streamed; `traditional` graded, `spj` skipped |
 | `hlce` | `HumanLastCodeExam/icpc-world-finals` | benchmark | Streamed; stdin/stdout `test_cases` |
 
@@ -197,13 +218,57 @@ python scripts/environments/inference/run_code_contests.py --adapter codeforces 
     --num_examples 100 --num_samples 4 --reasoning_effort high
 ```
 
-It buckets `success@1` / `success@k` by the adapter's field (rating here); at the default
-`--success_threshold` a problem counts solved only when every test in the pool passes.
+It buckets `success@1` / `success@k` by the adapter's field (rating here; neither is a benchmark's
+mean-over-samples pass@1, see [Evaluating on an Environment](evaluation.md#running-an-evaluation)).
+A problem counts solved when the submitted program passes every test in the pool — the environment's
+verdict, not the shaped total, so the recipe's shaping under `--training_config` (a
+`tool_error_penalty` on every refused scratchpad call under `leaderboard`, a submission bonus) moves
+it neither way, and the coding CLI takes no `--success_threshold`. The verdict is the episode's last
+graded submission and `success@1` each row's first scored sample, while the
+[re-grader](evaluation.md#re-grading-recorded-trajectories) scores every episode on its first
+submission (`s@1`) or any within its budget (`s@2`). The two score the same submission only on a
+`leaderboard` run at `--num_samples 1`, where each row is one episode with one submission.
 
 Without `--training_config` or `--max_tokens`, `--reasoning_effort` sets the generation budget: the
 level's `thinking_tokens` plus 4096 tokens of solution headroom, which the served context window
-must exceed. Grading knobs with no flag go through `--env_kwargs`, recorded in the trajectory meta.
+must exceed. Every episode sends its level's thinking budget, so the vLLM server needs what the
+[reasoning budget](../async-grpo/rollouts.md#reasoning-budget) needs, a reasoning parser among it;
+without one vLLM rejects the request. A non-thinking model served with a think-tag parser gets its
+whole answer back as reasoning (no end marker reads as all reasoning), so evaluate one with
+`--reasoning_effort none`: no level, no budget, no parser needed, and a default `--max_tokens` of
+32768, the training rollout's. Under `--training_config` the level defaults to the YAML's, where a
+`reasoning_effort: null` is `none`; only a YAML without the key takes `medium`, as training does.
+The eval knows the server is SGLang only from a `--training_config` naming `rollout_backend: sglang`,
+which drops the budget as [training does](../async-grpo/rollouts.md#reasoning-budget).
+
+`--eval_protocol` picks the [evaluation protocol](#evaluation-protocols), else the training
+config's, else `harness`; the report title and the trajectory meta name it. A training config
+written under another protocol gives up the `max_submissions` / `max_test_calls` the flag's
+protocol pins (logged); a config that names the protocol itself, or `--env_kwargs`, contradicting a
+pin raises. Grading knobs with no flag go through `--env_kwargs`, recorded in the trajectory meta.
 Flags, output files and re-grading: [Evaluating on an Environment](evaluation.md).
+
+### LiveCodeBench window
+
+A LiveCodeBench release is cumulative — every problem since May 2023 — so most of it predates a
+current model's training cutoff. Score a window after it:
+
+```bash
+python scripts/environments/inference/run_code_contests.py --adapter livecodebench \
+    --dataset livecodebench/code_generation_lite --config release_v6 \
+    --start_date 2025-01-01 --end_date 2025-04-30 --platform atcoder,codeforces \
+    --eval_protocol leaderboard --base_url http://localhost:8000/v1 --model <served-name> \
+    --num_examples 0 --num_samples 4
+```
+
+- `--start_date` / `--end_date` (`YYYY-MM-DD`) are both inclusive and compare the row's `contest_date` by calendar day; either may stay open.
+- `--platform` takes the platforms this adapter grades, as the dataset spells them: `atcoder`, `codeforces`. LeetCode rows are functional, which the stdin/stdout environment cannot grade, so `leetcode` is refused.
+- Rows come newest release file first, each file in its stored order, which is not newest-first (`test6.jsonl` opens on its 2025-01-04 contests). `--num_examples` (default 50) takes the first problems of the window in that order, not its newest; `0` scores the whole window.
+- Any other date spelling, a start after the end, a platform outside that list, or a window or platform filter on an adapter that declares none exits before a row is read. A row without a parsable `contest_date` raises under a window.
+
+The selection is recorded in the trajectory meta ([re-grading](evaluation.md#re-grading-recorded-trajectories)).
+Only `livecodebench` declares a contest date and platform (`contest_date`, `platform_field` and
+`platforms` on its `CodeDatasetAdapter`).
 
 ## Related pages
 

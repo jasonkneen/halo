@@ -11,8 +11,8 @@ the same failure at 1/n scale: every earlier assistant turn is masked, silently.
 in a parse-only check: every one of these configs parses clean.
 
 Only pairings pinning a repo-owned ``jinja-templates/*.jinja`` are covered — a hub-bundled template
-is not on disk here. The scan reads the ``examples/`` YAML **and** the ```yaml fences of the two doc
-trees, so a doc recipe that pairs a marker with a template is held to the same contract as a shipped
+is not on disk here. The scan reads the ``examples/`` YAML **and** the ```yaml fences of the doc and
+skill trees, so a doc recipe that pairs a marker with a template is held to the same contract as a shipped
 config. Rendering is real (the same Jinja environment transformers uses), so a marker the template
 assembles from parts is matched exactly as the collator would match it.
 
@@ -30,7 +30,7 @@ from transformers.utils.chat_template_utils import _compile_jinja_template
 PROJECT_ROOT = Path(__file__).resolve().parents[3]
 
 # Doc trees whose ```yaml fences are held to the same pairing contract as examples/.
-_DOC_TREES = ("human-docs", "agent-docs")
+_DOC_TREES = ("human-docs", "agent-docs", "skills")
 _YAML_FENCE = re.compile(r"^```ya?ml\n(.*?)^```", re.M | re.S)
 
 # Single turn: every shipped template accepts it, including the ``*-instruct`` ones whose own guard
@@ -65,13 +65,9 @@ def _pairing(source: str, data: object) -> tuple[str, str, str] | None:
     return None
 
 
-def _marker_configs() -> list[tuple[str, str, str]]:
-    """Every pairing in the tree: the ``examples/`` YAML plus the doc trees' ```yaml fences."""
-    found = []
-    for config in sorted((PROJECT_ROOT / "examples").rglob("*.yaml")):
-        pairing = _pairing(str(config.relative_to(PROJECT_ROOT)), _yaml.load(config))
-        if pairing:
-            found.append(pairing)
+def _doc_fences() -> list[tuple[str, object]]:
+    """``(source, parsed)`` for every ```yaml fence of the doc trees; an unparseable fence is skipped."""
+    fences = []
     for tree in _DOC_TREES:
         for page in sorted((PROJECT_ROOT / tree).rglob("*.md")):
             for index, block in enumerate(_YAML_FENCE.findall(page.read_text())):
@@ -79,12 +75,20 @@ def _marker_configs() -> list[tuple[str, str, str]]:
                     data = _yaml.load(block)
                 except Exception:  # a fence that is not parseable YAML is not a config
                     continue
-                pairing = _pairing(f"{page.relative_to(PROJECT_ROOT)}#yaml[{index}]", data)
-                if pairing:
-                    found.append(pairing)
-    return found
+                fences.append((f"{page.relative_to(PROJECT_ROOT)}#yaml[{index}]", data))
+    return fences
 
 
+def _marker_configs() -> list[tuple[str, str, str]]:
+    """Every pairing in the tree: the ``examples/`` YAML plus the doc trees' ```yaml fences."""
+    sources = [
+        (str(config.relative_to(PROJECT_ROOT)), _yaml.load(config))
+        for config in sorted((PROJECT_ROOT / "examples").rglob("*.yaml"))
+    ]
+    return [pairing for source, data in sources + _DOC_FENCES if (pairing := _pairing(source, data))]
+
+
+_DOC_FENCES = _doc_fences()
 _MARKER_CONFIGS = _marker_configs()
 
 
@@ -108,6 +112,16 @@ def test_the_scan_reaches_the_doc_trees():
     assert any(source.endswith("]") for source, _, _ in _MARKER_CONFIGS), (
         f"no ```yaml fence under {_DOC_TREES} pairs a chat_template with an assistant_message_template — "
         f"the doc half of the scan is dead"
+    )
+
+
+@pytest.mark.parametrize("tree", _DOC_TREES)
+def test_the_scan_reads_each_doc_tree(tree):
+    """Counted per tree: ``rglob`` on a missing or renamed root yields nothing, so one dead root would
+    otherwise hide behind the other's fences."""
+    assert (PROJECT_ROOT / tree).is_dir(), f"{tree} is not a directory — that half of the scan is dead"
+    assert any(source.startswith(f"{tree}/") for source, _ in _DOC_FENCES), (
+        f"no ```yaml fence found under {tree} — that half of the scan is dead"
     )
 
 

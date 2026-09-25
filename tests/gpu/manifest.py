@@ -99,12 +99,16 @@ MANIFEST: dict[str, TestSpec] = {
     "data/test_sft_caching_e2e.py": TestSpec(nproc=2, markers=("gpu", "core", "2gpu"), timeout=600),
     "data/test_sharded_distributed_load.py": TestSpec(nproc=2, markers=("gpu", "core", "2gpu"), timeout=600),
     # ── kernels ──
+    "kernels/test_chunked_logprob_precision.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=600),
     "kernels/test_deepgemm.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=600),
     "kernels/test_fa4_trainable_sink_rescale.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=600),
     "kernels/test_fused_glu.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=600),
     "kernels/test_grouped_gemm.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=600),
     "kernels/test_grouped_mm_empty_groups.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu", "moe"), timeout=600),
     "kernels/test_liger_family_kernels.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=900),
+    "kernels/test_liger_routed_experts.py": TestSpec(
+        nproc=1, markers=("gpu", "core", "1gpu", "moe", "qwen3"), timeout=600
+    ),
     "kernels/test_lowp_expert_lora.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu", "lora", "moe"), timeout=600),
     "kernels/test_packed_broadcast_memory.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=600),
     "kernels/test_lowp_fsdp2_weight_cache.py": TestSpec(nproc=2, markers=("gpu", "core", "2gpu"), timeout=600),
@@ -328,6 +332,12 @@ MANIFEST: dict[str, TestSpec] = {
     ),
     "parallelism/ep/test_ep_gc_bias_balancing.py": TestSpec(
         nproc=2, markers=("gpu", "core", "2gpu", "ep", "moe", "gptoss"), timeout=900
+    ),
+    "parallelism/ep/test_ep_gc_router_aux_loss.py": TestSpec(
+        nproc=2,
+        markers=("gpu", "core", "2gpu", "ep", "moe", "gptoss", "qwen3"),
+        timeout=600,
+        args_matrix=("--family gpt_oss", "--family qwen3_moe"),
     ),
     "parallelism/ep/test_grouped_mm_b300.py": TestSpec(nproc=1, markers=("gpu", "core", "1gpu"), timeout=600),
     "parallelism/ep/test_zaya_ep.py": TestSpec(
@@ -744,6 +754,9 @@ MANIFEST: dict[str, TestSpec] = {
     "trainers/preference/test_smpo_fsdp.py": TestSpec(nproc=2, markers=("gpu", "core", "2gpu", "qwen3"), timeout=600),
     "trainers/preference/test_smpo_padding_free.py": TestSpec(
         nproc=2, markers=("gpu", "core", "2gpu", "qwen3"), timeout=600
+    ),
+    "trainers/preference/test_smpo_padding_free_segments.py": TestSpec(
+        nproc=1, markers=("gpu", "core", "1gpu", "moe", "lfm2", "qwen3"), timeout=600
     ),
     "trainers/preference/test_smpo_tp.py": TestSpec(
         nproc=2, markers=("gpu", "core", "2gpu", "tp", "qwen3"), timeout=600

@@ -114,16 +114,19 @@ docker run --gpus all --network=host --ipc=host \
 | `max_concurrent_rollouts` | `None` | pipeline depth; default 4 × this rank's share of `num_rollout_workers` (the whole pool locally, `÷ world_size` on a shared Ray cluster) |
 | `ray_address` | `None` | shared Ray cluster; `None` = per-rank local |
 | `rollout_temperature` / `rollout_top_p` / `rollout_max_tokens` | `0.7` / `0.95` / `32768` | rollout sampling (max tokens per turn) |
-| `rollout_max_thinking_tokens` | `None` | per-turn CoT cap (vLLM `thinking_token_budget`); needs a server reasoning parser + `VLLM_USE_V2_MODEL_RUNNER=0`, refused under `sglang` |
-| `rollout_chat_template_kwargs` | `{}` | chat-template variables sent on every rollout request **and** applied to the trainer's own renders (Qwen3.x `preserve_thinking`); `reasoning_effort` is refused here — it travels per episode |
+| `rollout_max_thinking_tokens` | `None` | per-turn CoT cap (vLLM `thinking_token_budget`); needs a server reasoning parser + `VLLM_USE_V2_MODEL_RUNNER=0`, refused under `sglang`. Under the episode scope, the most one turn may take of the episode's budget |
+| `rollout_thinking_budget_scope` | `turn` | what a thinking budget covers: `turn` (each turn whole) or `episode` (the turns share it, each turn capped at what is left). `episode` is vLLM-only, needs `train_on_sampled_tokens`, and without `rollout_max_thinking_tokens` needs the env's `reasoning_effort` and every level's `thinking_tokens` |
+| `rollout_thinking_turn_reserve` | `512` | under the episode scope, the reasoning a turn keeps once the budget is spent; at most `rollout_max_thinking_tokens` and every level's `thinking_tokens` |
+| `rollout_reasoning_end_token` | `</think>` | the token that closes reasoning; under the episode scope a turn's spend is its sampled ids up to and including it |
+| `rollout_chat_template_kwargs` | `{}` | chat-template variables sent on every rollout request **and** applied to the trainer's own renders (Qwen3.x `preserve_thinking`); `reasoning_effort` and `reasoning_budget` are refused here — they travel per episode — and so is `reasoning_budget_scope`, which follows `rollout_thinking_budget_scope` |
 | `max_train_row_tokens` | `None` | longest training row a rank takes; must exceed `rollout_max_tokens`. Over-cap per-turn rows are left out, whole-trajectory rows train at zero weight (`sampling/rows_over_cap_frac`) |
 | `eval_rollout_batch_size` | `None` | rows per rank in one eval rollout round (eval runs without prefetch); `None` = the eval batch |
 | `effort_length_penalty_k0` / `effort_length_floor_weight` | `None` / `0.0` | both off by default; the first prices an episode's reasoning tokens by its effort level (capped at `effort_length_penalty_c_max`), the second its shortfall against `effort_length_floor_budgets` × the thinking budget it ran under |
-| `episode_timeout` | `1200.0` | per-episode wall clock, checked against the NCCL watchdog — raise `DIST_NCCL_TIMEOUT_MINUTES` with it |
+| `episode_timeout` | `1200.0` | per-episode deadline in engine-serving time (a weight-sync pause is credited back), checked against the NCCL watchdog — raise `DIST_NCCL_TIMEOUT_MINUTES` with it |
 | `train_on_sampled_tokens` | `True` | train on the server's actual sampled ids (needs `--return-tokens-as-token-ids`) rather than a re-tokenized re-render |
 | `enable_prefetch` | `True` | overlap rollout with training (auto-disabled in single-server mode) |
 | `num_prefetch_batches` | `1` | batches prefetched ahead |
-| `model_name` / `request_timeout` / `max_retries` / `retry_base_wait` | — | per-request HTTP behavior |
+| `model_name` / `request_timeout` / `max_retries` / `retry_base_wait` | — | per-request HTTP behavior; `request_timeout` counts engine-serving time like `episode_timeout` |
 
 `vllm_group_port` is **not** in `AsyncTrainingConfig` — it's a TRL `GRPOConfig`
 field (`self.args.vllm_group_port`) read when constructing `VLLMWeightSyncClient`;
@@ -202,13 +205,15 @@ server, `make ... EFA=1` on the trainer, `scripts/profiling/weight_sync_transpor
 
 Per-env `environment_kwargs`: `search_backend` (qa_search/exam_qa only — `react_search` builds its
 tools with the default backend and refuses the key; `mock` needs `HALO_ALLOW_MOCK_SEARCH=1`),
-`open_book` (exam_qa), `mcp_server` (mcp), `timeout_per_test`, `max_grading_seconds` and
-`compiled_time_limit_scale` (code_contests), `include_python_tools` (qa_search). Every environment
-also takes the `BaseEnvironment` knobs (`src/environments/base.py`): `reasoning_effort` /
+`open_book` (exam_qa), `mcp_server` (mcp), `timeout_per_test`, `max_grading_seconds`,
+`compiled_time_limit_scale` and `verdict_detail` (code_contests), `include_python_tools` (qa_search),
+`sandbox_backend` / `sandbox_url` (swe, code_contests). Every environment also takes the
+`BaseEnvironment` knobs (`src/environments/base.py`): `reasoning_effort` /
 `reasoning_effort_profiles`, `carry_reasoning` (refused under `rollout_backend: sglang`),
 `requires_answer`, `max_observation_chars`, `max_length_cutoff_recoveries` and the
-`tool_success_reward` / `tool_error_penalty` / `tool_reward_cap` turn shaping — the shipped
-`examples/grpo/environmental/environmental-grpo-template.yaml` enumerates them. Custom env: pass `environment_cls`
+`tool_success_reward` / `tool_error_penalty` / `tool_reward_cap` turn shaping. The common keys are
+listed under EnvironmentConfig in `agent-docs/reference/configuration-reference.md`; each
+environment's page lists its own. Custom env: pass `environment_cls`
 (a `src.environments.base.BaseEnvironment` subclass) + `environment_kwargs`
 instead of `environment_config`.
 

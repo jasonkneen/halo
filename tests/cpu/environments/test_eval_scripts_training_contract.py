@@ -22,10 +22,21 @@ from scripts.environments._common import (
     rollout_config_from_args,
     write_eval_outputs,
 )
+from scripts.environments.inference.run_code_contests import resolve_env_config
 from src.configs.rollout_config import DEFAULT_ROLLOUT_TOP_P
+from src.env import resolve_nccl_timeout_minutes
+from src.environments.envs.tasks.coding.code_contests import DEFAULT_REASONING_EFFORT
 from src.environments.eval_runner import DEFAULT_REQUEST_TIMEOUT_S
+from src.environments.registry import resolve_environment
+from tests.common.code_contests import StubSandbox
+from tests.common.utils import REPO_ROOT
 
 _CALL_TOKEN_ID = 200012
+# A shipped recipe whose episode_timeout needs the raised NCCL watchdog its launch line exports.
+_CODEFORCES_RECIPE = (
+    REPO_ROOT
+    / "examples/grpo/environmental/qwen3_5/vllm/qwen3.6-35b-a3b-code-contests-full-ep1-stage1-codeforces.yaml"
+)
 
 _TRAINING_YAML = """\
 model_name_or_path: dummy/model
@@ -110,12 +121,51 @@ def test_the_yaml_environment_config_reaches_the_eval(contract):
     }
 
 
+@pytest.fixture
+def default_watchdog_recipe(monkeypatch):
+    """The codeforces recipe's contract under the default watchdog, which its episode_timeout exceeds."""
+    monkeypatch.delenv("DIST_NCCL_TIMEOUT_MINUTES", raising=False)
+    contract = TrainingContract.load(str(_CODEFORCES_RECIPE))
+    assert contract.async_config.episode_timeout > resolve_nccl_timeout_minutes() * 60
+    return contract
+
+
+def test_a_shipped_recipe_evaluates_without_the_training_watchdog(default_watchdog_recipe):
+    """The eval joins no process group, so the recipe's contract builds on the default watchdog."""
+    rollout = default_watchdog_recipe.rollout_config()
+    assert rollout.episode_timeout == default_watchdog_recipe.async_config.episode_timeout
+
+
+def test_training_still_refuses_the_recipe_on_the_default_watchdog(default_watchdog_recipe):
+    with pytest.raises(ValueError, match="NCCL collective watchdog"):
+        default_watchdog_recipe.async_config.get_rollout_config()
+
+
 def test_an_unresolvable_stop_token_is_refused(tmp_path, monkeypatch):
     path = tmp_path / "train.yaml"
     path.write_text(_TRAINING_YAML.replace('["<|call|>"]', '["<|call|>", "<|nope|>"]'))
     monkeypatch.setattr(common.AutoTokenizer, "from_pretrained", lambda *a, **k: _Tokenizer())
     with pytest.raises(ValueError, match="<\\|nope\\|>"):
         TrainingContract.load(str(path))
+
+
+@pytest.mark.parametrize(
+    ("effort_line", "level"),
+    [("  reasoning_effort: null\n", None), ("", DEFAULT_REASONING_EFFORT)],
+    ids=["null", "absent"],
+)
+def test_the_coding_eval_takes_the_level_the_training_env_was_built_with(tmp_path, monkeypatch, effort_line, level):
+    """A YAML's ``reasoning_effort: null`` trains at no level and one without the key at the env
+    class's default: the eval resolves each to the level training built its env with, instead of
+    reading the null as unset and grading a no-level policy at the default."""
+    path = tmp_path / "train.yaml"
+    path.write_text(_TRAINING_YAML.replace("  timeout_per_test: 3\n", f"  timeout_per_test: 3\n{effort_line}"))
+    monkeypatch.setattr(common.AutoTokenizer, "from_pretrained", lambda *a, **k: _Tokenizer())
+    contract = TrainingContract.load(str(path))
+    trained_env = contract.env_config_dict()
+    training = resolve_environment(contract.env_config.environment_type, {**trained_env, "sandbox": StubSandbox()})
+    flags = SimpleNamespace(eval_protocol=None, language=None, reasoning_effort=None, max_turns=None)
+    assert resolve_env_config(flags, trained_env, {})["reasoning_effort"] == training.reasoning_effort == level
 
 
 def test_the_meta_line_records_the_whole_generation_contract(contract, tmp_path):

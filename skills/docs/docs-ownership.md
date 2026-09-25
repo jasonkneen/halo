@@ -59,6 +59,7 @@ changes.
 | `src/checkpoint/model_card.py` (`HUB_TAGS`, `tag_model_card` / `tag_exported_model_card`: the `halo` Hub tag on the model card of every checkpoint Halo writes, tool conversions included) | `agent-docs/reference/checkpoints.md` (Hub model card), `human-docs/checkpoints.md` (upload) |
 | `src/distributed/checkpoint/write.py` (the collective half of a write: retain-gated DTensor resolve of params and buffers with neutralized sinks, the streamed part writer, the shard-index exchange) | `agent-docs/reference/checkpoints.md`, `agent-docs/parallelism/data-parallelism.md` |
 | `src/models/structure.py` (module-tree introspection: unwrap, PEFT names, decoder layers, norms) | `agent-docs/reference/checkpoints.md`, `agent-docs/parallelism/data-parallelism.md` |
+| `src/models/head_transform.py` (per-family head transform, verified against the family forward) | `agent-docs/models/adding-a-model.md`, `agent-docs/training-methods/grpo/async-grpo/performance.md`, `agent-docs/parallelism/pipeline-parallelism.md` |
 | `src/distributed/fsdp.py` (FSDP2 wrapping + reshard) | `agent-docs/parallelism/data-parallelism.md`, `agent-docs/reference/checkpoints.md` |
 | `src/distributed/runtime.py` (rank/world state, barriers, cross-rank consensus, group timeouts), `src/distributed/filesystem.py` (c10d-store phases, main-first ordering, output-FS probe, load throttle) | `agent-docs/parallelism/multi-node.md`, `agent-docs/data/filesystem-handling.md`, `agent-docs/reference/architecture.md` |
 | `src/distributed/nvlink.py` (fabric probes behind `nvlink_domain_size`) | `agent-docs/parallelism/multi-node.md`, `agent-docs/infrastructure/deepep.md` |
@@ -79,6 +80,7 @@ changes.
 | `src/models/modality.py` (multimodal checkpoint detection) | `agent-docs/data/dataset-formats.md`, `agent-docs/models/README.md` |
 | `src/models/attention_geometry.py` (head-dim and KV-head resolution across composite/per-layer configs) | `agent-docs/models/README.md`, `agent-docs/optimization/flash-attention.md` |
 | `src/models/attention_layout.py` (per-layer attention cost rules off `layer_types` + head geometry — the MFU attention term) | `agent-docs/training-methods/callbacks.md`, `agent-docs/optimization/throughput-benchmarks.md` |
+| `src/models/segment_markers.py` (per-family conv / linear-attention segment markers, the GatedDeltaNet kernel refusal) | `agent-docs/data/collators.md` (Document isolation under packing), `agent-docs/optimization/padding-free-collator.md`, `agent-docs/training-methods/preference/smpo.md` |
 | new model support | new `agent-docs/models/<family>.md` + model matrices in `expert-parallelism.md`/`grouped-gemm.md` + `agent-docs/models/README.md` + `CLAUDE.md` index |
 
 ## Collators & data
@@ -117,7 +119,7 @@ changes.
 |---|---|
 | `src/callbacks/` (ParameterStatsCallback, GenerateExamplesCallback, EfficiencyCallback, MoEMetricsCallback, RouterBiasBalancingCallback, VariableSchedulerCallback, TorchProfilerCallback) | `agent-docs/training-methods/callbacks.md` |
 | `src/callbacks/wiring.py` (`build_perf_callbacks`, `moe_balancing`) | `agent-docs/training-methods/callbacks.md`, `agent-docs/optimization/throughput-benchmarks.md` |
-| `src/models/moe_balancing.py` (`resolve_balancing_mode`, the router field registries) and `src/distributed/expert_parallel/balancing_strategy.py` (`apply_balancing_strategy`, the export contract) | `agent-docs/training-methods/callbacks.md` (MoE balancing modes), `agent-docs/models/README.md` |
+| `src/models/moe_balancing.py` (`resolve_balancing_mode`, the router field registries), `src/models/moe_aux_loss.py` (the aux-loss gradient under reentrant checkpointing) and `src/distributed/expert_parallel/balancing_strategy.py` (`apply_balancing_strategy`, the export contract) | `agent-docs/training-methods/callbacks.md` (MoE balancing modes), `agent-docs/models/README.md` |
 | `src/hardware.py` (architecture predicates, GPU model detection, peak-FLOPS registry, host-RAM probe) | `agent-docs/optimization/throughput-benchmarks.md`, `agent-docs/optimization/flash-attention.md` |
 
 ## Environments (Async GRPO with Environments)

@@ -34,6 +34,7 @@ from src.environments.envs.tasks.coding.datasets import (
     pack_livecodebench_verification,
 )
 from src.environments.envs.tasks.coding.grading import GradingSpec, compare_tokens, grade_solution
+from src.environments.sandbox.base import SandboxExecutor
 from src.environments.sandbox.resolve import resolve_sandbox
 
 # A tolerance special-judge: accept any float within 1e-4 of the reference (argv = 3 file paths).
@@ -297,7 +298,7 @@ def test_env_reset_parses_payload_and_reward_is_fraction():
     traj = env._reset_single("Print a+b.", {"answer": answer})
     assert traj.info["tests_total"] == 2
     assert traj.info["_time_limit"] == 2.0
-    assert traj.info["has_checker"] is False
+    assert traj.info["_checker"] is None
 
     half_right = "a=int(input()); b=int(input()); print(a+b if a==2 else a*b)"
     passed, total, *_ = env._grade_submission(half_right, traj)
@@ -508,7 +509,10 @@ def test_sandbox_fault_during_grading_marks_the_episode_invalid():
     spent, so the episode completes ungraded and grades 0 — inside the GRPO group baseline, where it
     biases every sibling's advantage."""
 
-    class _RaisingSandbox:
+    class _RaisingSandbox(SandboxExecutor):
+        def open_session(self):
+            raise NotImplementedError
+
         def run(self, code, **kwargs):
             raise OSError(28, "No space left on device")
 

@@ -27,7 +27,7 @@ Each step pushes weights, collects a round of episodes, turns the sampled tokens
 | `native_math`, `native_coding`, `native_combined` | the same tools as native function calls; grades the row's `answer` when there is one, otherwise finishing the episode | no |
 | `qa_search` | factual question answering with a web-search tool | yes |
 | `exam_qa` | multiple-choice and open exams, closed-book unless `open_book: true` | yes |
-| `swe` | edit-run-test loop over a workspace that survives across turns | no |
+| `swe` | edit-run-test loop over a workspace that survives across turns | yes (unless judge-only) |
 | `code_contests`, `codeforces` | write a program, try it in a scratchpad, submit it against hidden tests | yes |
 | `mcp` | whatever tools an MCP server advertises | no |
 
@@ -96,7 +96,9 @@ Three decisions matter more than the rest.
 - **Reasoning effort.** `environment_kwargs.reasoning_effort` (`low` / `medium` / `high` / `random`) sets how much the
   model should think. `reasoning_effort_profiles` gives each level its own caps, as the code-contests recipes do
   (`{high: {thinking_tokens: 16384, max_submissions: 3, max_test_calls: 6}}`). The engine-side cap
-  `rollout_max_thinking_tokens` is vLLM-only.
+  `rollout_max_thinking_tokens` is vLLM-only. A level's budget covers each turn by default; with
+  `rollout_thinking_budget_scope: episode` (vLLM-only) it covers the whole episode, so a recovery turn gets only what
+  is left, as in the Qwen3.6 vLLM code-contests recipes.
 
     The model only sees the level if the chat template renders it. `jinja-templates/qwen3/qwen3.6-reasoning-effort.jinja`
     and `jinja-templates/gemma4/gemma4-reasoning-effort.jinja` do. Pin one with `force_chat_template: true` and serve
