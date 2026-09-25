@@ -19,9 +19,9 @@ go through an accepted issue and a maintainer approval first.
 | Code change | Accepted issue + a maintainer's `/approve @your-handle` on it first |
 
 Don't open a PR before a maintainer approves you on an accepted issue —
-unapproved PRs are closed automatically; a PR closed this way can be reopened
-once you are approved. Once you land one PR, you're added to the approved list
-and skip the gate next time.
+unapproved PRs are closed automatically. After approval, reopen a PR closed
+this way, or ask on the issue and a maintainer will. Once you land one PR,
+you're added to the approved list and skip the gate next time.
 
 Work from a **fork**: fork the repo, clone your fork, branch off `main`, push
 to your fork, and open the PR against `whitecircle/halo`.
@@ -38,15 +38,19 @@ models you used.
 
 1. Issue → approval → focused PR (keep diffs under ~2,000 lines).
 2. Pull (or build) the image and run the gates: `make lint`, `make format`,
+   `make seed-hf-cache` (the Hub configs and tokenizers the CPU tests read;
+   again when `tests/common/models.py` or `examples/` gain a repo),
    `make test-cpu`, `make docs` — plus `make test-gpu-core` for GPU-affecting
-   changes. Lint/format and the docs link check run on the host; tests run inside
-   the image (`make test-cpu` needs no GPU). Hosted CI runs only lint and the link
-   check, so report the test result in the PR.
+   changes. Lint/format and the docs link check run on the host; tests run
+   inside the image (`make test-cpu` needs no GPU). Hosted CI runs only lint and
+   the docs checks, so report the test results in the PR.
 3. Ship tests that **fail when the behavior breaks** — no smoke-only or
    `assert x is not None` tests. The anti-slop test guide is in
    [`agent-docs/contributing/`](../agent-docs/contributing/README.md) ↗.
-4. Every PR is squash-merged. Signed commits (SSH or GPG) are required only on
-   branches of this repository, not in a fork. Never commit secrets, `.env`, or
+4. Every PR is squash-merged, and every commit in it must carry a verified
+   signature (SSH or GPG), forks included: GitHub does not merge a PR while any
+   of its commits lacks one. Signing setup and re-signing earlier commits:
+   [`CONTRIBUTING.md`](../CONTRIBUTING.md). Never commit secrets, `.env`, or
    keys.
 
 The dev-environment guide (building images, running tests, docs tooling) is

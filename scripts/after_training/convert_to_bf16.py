@@ -13,7 +13,6 @@ Usage:
 
 import argparse
 import logging
-import math
 import os
 from collections import Counter
 
@@ -27,10 +26,12 @@ import src.distributed.expert_parallel.layers.roster  # noqa: F401 — registers
 from scripts._common import add_max_shard_size_arg, add_trust_remote_code_arg
 from src.checkpoint.adapters import assert_no_expert_lora_adapter, load_base_for_adapter, merge_adapter_into_base
 from src.checkpoint.format import ADAPTER_SAFETENSORS_FILE, DEFAULT_MAX_SHARD_SIZE
+from src.checkpoint.model_card import tag_model_card
 from src.checkpoint.tool_io import (
     apply_training_sidecars,
     checkpoint_shard_files,
     copy_training_sidecars,
+    header_numel,
     iter_checkpoint_shard_entries,
     preflight_model_load_resources,
     reject_in_place_conversion,
@@ -182,7 +183,7 @@ def verify_model_conversion(model_path):
     dtype_params: Counter[str] = Counter()
     for _shard, reader, key in iter_checkpoint_shard_entries(model_path):
         header = reader.get_slice(key)
-        dtype_params[header.get_dtype()] += math.prod(header.get_shape())
+        dtype_params[header.get_dtype()] += header_numel(header)
 
     # Float tensors only: an integer buffer can never be bf16, so counting it would dilute the share.
     # safetensors spells float dtypes F16/F32/F64/F8_*/BF16 and everything else I*/U*/BOOL.
@@ -372,6 +373,8 @@ def _convert_checkpoint_to_bf16(
         # Only this branch copies them by hand: the adapter dir's sidecars have to survive for the
         # later merge, and save_pretrained copies nothing.
         copy_training_sidecars(model_path, output_path)
+        # PEFT's card takes its tags from the base model, which this tool loads untagged.
+        tag_model_card(output_path)
         return
 
     save_full_checkpoint(
@@ -455,7 +458,10 @@ def parse_args():
         "--output_dir",
         type=str,
         required=True,
-        help="Output directory for the BF16 model (any model*.safetensors/index already there is removed first)",
+        help=(
+            "Output directory for the BF16 model "
+            "(every model*.safetensors/index the completed save did not produce is removed afterwards)"
+        ),
     )
     parser.add_argument(
         "--model_type",

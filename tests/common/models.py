@@ -4,12 +4,15 @@ One constant per checkpoint a test loads, per local patched-checkpoint path and 
 family's branches need. A test that inlines a model name or a tiny config splits the roster in two.
 """
 
+from src.env import data_path
+
 # Dense Models
 
 QWEN3_0_6B = "Qwen/Qwen3-0.6B"
 QWEN3_4B_INSTRUCT = "Qwen/Qwen3-4B-Instruct-2507"
 QWEN3_8B = "Qwen/Qwen3-8B"
 QWEN3_5_2B = "Qwen/Qwen3.5-2B"
+QWEN3_5_9B = "Qwen/Qwen3.5-9B"
 
 # MoE Models
 
@@ -21,6 +24,7 @@ LFM2_24B_A2B = "LiquidAI/LFM2-24B-A2B"
 QWEN3_5_MOE = "Qwen/Qwen3.5-397B-A17B"
 QWEN3_5_MOE_35B = "Qwen/Qwen3.5-35B-A3B"
 QWEN3_5_MOE_122B = "Qwen/Qwen3.5-122B-A10B"
+QWEN3_6_MOE_35B = "Qwen/Qwen3.6-35B-A3B"
 BAILING_MOE_RING_MINI = "inclusionAI/Ring-mini-linear-2.0"
 BAILING_MOE_LING_MINI = "inclusionAI/Ling-mini-2.0"
 BAILING_LING_3_TINY = "inclusionAI/Ling-3.0-tiny"
@@ -30,11 +34,18 @@ MISTRAL3_119B_MOE = "mistralai/Mistral-Small-4-119B-2603"
 COMMAND_A_PLUS = "CohereLabs/command-a-plus-05-2026-bf16"
 ZAYA_8B = "Zyphra/ZAYA1-8B"
 
-# Vocab-patched local checkpoints (scripts/before_training/patch_vocab.py output). The hub copies
-# carry a vocab the toolkit's tokenizer alignment rejects, so these tests need the patched dir.
+# Local checkpoints (scripts/before_training/patch_vocab.py output) under the toolkit scratch root;
+# agent-docs/contributing/README.md gives the command that writes each one. A suite defaulting to one
+# skips when the directory is absent.
 
-GEMMA4_26B_A4B_PATCHED = "/mnt/models/gemma-4-26B-A4B-it-patched"
-GPT_OSS_20B_PATCHED = "/mnt/models/gpt-oss-20b-BF16-patched"
+
+def patched_checkpoint_dir(hub_id: str) -> str:
+    """``$HALO_DATA_ROOT/models/<repo name>-patched``, where the documented command writes ``hub_id``."""
+    return data_path("models", f"{hub_id.rsplit('/', 1)[-1]}-patched")
+
+
+GEMMA4_26B_A4B_PATCHED = patched_checkpoint_dir(GEMMA4_26B_A4B)
+GPT_OSS_20B_PATCHED = patched_checkpoint_dir(GPT_OSS_20B)
 
 # Tiny random-init configs (no hub checkpoint exists at test scale)
 
@@ -486,8 +497,21 @@ TINY_STEP3P7_VISION_CONFIG = {
 # Special Models
 
 QWEN3_5_VLM_4B = "Qwen/Qwen3.5-4B"  # Natively multimodal (Image-Text-to-Text)
-QWEN3_VL_2B = "Qwen/Qwen3-VL-2B-Instruct"
 PARAPHRASE_MINILM = "sentence-transformers/paraphrase-MiniLM-L3-v2"
+
+# Checkpoints the CPU tests read only a tokenizer, processor or chat template from
+
+GPT_OSS_20B_OPENAI = "openai/gpt-oss-20b"
+GEMMA4_31B_QAT = "google/gemma-4-31B-it-qat-w4a16-ct"
+GEMMA3_4B_IT = "google/gemma-3-4b-it"  # gated: anonymous downloads are refused
+QWEN2_5_VL_3B = "Qwen/Qwen2.5-VL-3B-Instruct"
+QWEN3_VL_2B = "Qwen/Qwen3-VL-2B-Instruct"
+
+# Snapshots a test pins because hub main can drift a chat template out from under it.
+PINNED_REVISIONS = {
+    QWEN2_5_VL_3B: "66285546d2b821cf421d4f5eb2576359d3770cd3",
+    QWEN3_VL_2B: "89644892e4d85e24eaac8bacfd4f463576704203",
+}
 
 # Profiling Benchmark Configs
 

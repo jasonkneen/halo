@@ -45,6 +45,7 @@ docker pull public.ecr.aws/whitecircle/halo:blackwell && docker tag public.ecr.a
 # ... or build it: B200 (SM100) / B300 (SM103); build-hopper for H100/H200 (SM90)
 make build-blackwell
 make install                  # uv install inside the image (a pulled image already has it)
+make seed-hf-cache            # configs + tokenizers the CPU tests read into HF_CACHE (no weights)
 make test-cpu                 # sanity check; needs Docker, not a GPU
 ```
 
@@ -182,8 +183,9 @@ manifest.
   tests/gpu/test_launcher_contract.py`). Name the entrypoints: pointed at `tests/gpu/` instead, pytest
   collects the manifest scripts as modules and executes their top-level torchrun code.
 
-    The launcher allocates a free `--master_port` per node and points `TMPDIR` at a per-run dir under
-    pytest's basetemp; never hardcode either. A script run standalone under
+    The launcher allocates a free `--master_port` per node from `tests/common/ports.py` — a pool from
+    20000 up to the kernel's ephemeral range, one slice per pytest-xdist worker — and points `TMPDIR`
+    at a per-run dir under pytest's basetemp; never hardcode either. A script run standalone under
     `torchrun --nproc_per_node=N <script>` lets torchrun pick the port.
 
 - **Scratch goes through the launcher's `TMPDIR`.** `setup_cache_dirs` for per-rank output/cache
@@ -218,7 +220,22 @@ infrastructure sets:
 | `VLLM_SERVER_URL` / `SGLANG_SERVER_URL` | `http://localhost:8000` / `:30000` | Live rollout server the `vllm_server` / `sglang_server` tiers probe and drive. Both are set by the shipped infrastructure itself (`Makefile`, `docker-compose.vllm.yml`), which is why they carry no `HALO_TEST_` prefix — every other test knob does. |
 | `HALO_TEST_LAUNCH_ID` | per launch | Set BY the launcher, not for it: a unique id stamped into every torchrun launch's environment so the orphan sweep can identify surviving workers from `/proc` without matching on a script name a co-tenant might also be running. Do not export it. |
 | `HALO_TEST_REQUIRE_SERVER` | unset | The **engine name** (`vllm` / `sglang`, set by the `make` server tiers) whose tests must not be skipped: a node carrying the `<value>_server` marker raises a `UsageError` instead of skipping when the endpoint is unreachable, so a dead container cannot pass as a skip. Any other engine's tests still skip. |
-| `HALO_TEST_MODEL` and the per-suite `HALO_TEST_<SUITE>_MODEL` overrides | per suite | Swap the checkpoint a suite loads without editing it. One spelling for every per-suite checkpoint override: `HALO_TEST_<SUITE>_MODEL`, so a global override cannot point a family test at a checkpoint of another family. Per family (`HALO_TEST_ZAYA_MODEL`, `HALO_TEST_GLM4_MODEL`, `HALO_TEST_GEMMA4_MODEL`, `HALO_TEST_QWEN3_5_MODEL`, …) and per phase: `HALO_TEST_EP_RT_MODEL` (EP round-trip, default a local vocab-patched Gemma4-26B-A4B — `scripts/before_training/patch_vocab.py` output, path in `tests/common/models.py`), `HALO_TEST_EP_CP_RT_MODEL` (EP+CP round-trip, the same for gpt-oss-20b), `HALO_TEST_EP1_KNOB_MODEL` (ep1 weight-sync, default gpt-oss), `HALO_TEST_RESUME_MODEL` / `HALO_TEST_RESUME_EP_MODEL` (SFT resume: dense default Qwen3-0.6B, and the MoE the `ep` mode needs), `HALO_TEST_LORA_CP_MODEL` / `HALO_TEST_LORA_SAVE_LOAD_MODEL` (both default Qwen3-0.6B; point them at a 4B for a scale check), `HALO_TEST_STEP3P7_MODEL` (**required** — the Step-3.7 vLLM sync suite serves its own `--write-checkpoint` tree and has no default). A suite whose local default checkpoint is absent skips rather than failing. |
+| `HALO_TEST_MODEL` and the per-suite `HALO_TEST_<SUITE>_MODEL` overrides | per suite | Swap the checkpoint a suite loads without editing it. One spelling for every per-suite checkpoint override: `HALO_TEST_<SUITE>_MODEL`, so a global override cannot point a family test at a checkpoint of another family. Per family (`HALO_TEST_ZAYA_MODEL`, `HALO_TEST_GLM4_MODEL`, `HALO_TEST_GEMMA4_MODEL`, `HALO_TEST_QWEN3_5_MODEL`, …) and per phase: `HALO_TEST_EP_RT_MODEL` (EP round-trip, default a local Gemma4-26B-A4B checkpoint, built as shown below the table), `HALO_TEST_EP_CP_RT_MODEL` (EP+CP round-trip, the same for gpt-oss-20b), `HALO_TEST_EP1_KNOB_MODEL` (ep1 weight-sync, default gpt-oss), `HALO_TEST_RESUME_MODEL` / `HALO_TEST_RESUME_EP_MODEL` (SFT resume: dense default Qwen3-0.6B, and the MoE the `ep` mode needs), `HALO_TEST_LORA_CP_MODEL` / `HALO_TEST_LORA_SAVE_LOAD_MODEL` (both default Qwen3-0.6B; point them at a 4B for a scale check), `HALO_TEST_STEP3P7_MODEL` (**required** — the Step-3.7 vLLM sync suite serves its own `--write-checkpoint` tree and has no default). A suite whose local default checkpoint is absent skips rather than failing. |
+
+The two local checkpoints those suites default to, Gemma4-26B-A4B (`HALO_TEST_GEMMA4_MODEL`,
+`HALO_TEST_EP_RT_MODEL`) and gpt-oss-20b (`HALO_TEST_EP_CP_RT_MODEL`), are
+`scripts/before_training/patch_vocab.py` outputs at `$HALO_DATA_ROOT/models/<repo name>-patched`
+(`patched_checkpoint_dir` in `tests/common/models.py`), which resolves under
+`$(HALO_SCRATCH)/models/` in the `make` tiers (they set `HALO_DATA_ROOT=$(HALO_SCRATCH)`). The
+suites need a local checkpoint directory, not added tokens, so the tool runs without `--patterns`
+and re-saves the source vocabulary unchanged:
+
+```bash
+python scripts/before_training/patch_vocab.py --model_id google/gemma-4-26B-A4B-it \
+    --output_dir "${HALO_DATA_ROOT:?}/models/gemma-4-26B-A4B-it-patched"
+python scripts/before_training/patch_vocab.py --model_id unsloth/gpt-oss-20b-BF16 \
+    --output_dir "${HALO_DATA_ROOT:?}/models/gpt-oss-20b-BF16-patched"
+```
 
 Test scripts read their own knobs through `src/env.py`, `HALO_TEST_`-prefixed so a stray `export` or
 a co-tenant compose file cannot collide with them — the one exception is the server-side `VLLM_MODEL`
@@ -227,6 +244,7 @@ below. The cross-suite ones:
 | Var | Meaning |
 |---|---|
 | `HALO_TEST_EP` / `HALO_TEST_CP` / `HALO_TEST_TP` / `HALO_TEST_ETP` | Parallel size a sweep-capable suite builds its `ParallelismConfig` with; unset = the suite's own default (often `world_size` for EP). The suffix is the parallelism axis as the rest of the toolkit spells it (`ep_size` / `cp_size` / `tp_size` / `expert_tp_size`), so the knob and the config field it feeds read the same. |
+| `HALO_TEST_REQUIRE_HUB_CACHE` | For an offline run over the seed `tests/common/hub_seed.py` derives ([Hub seed](../infrastructure/ci.md#hub-seed)): a CPU test whose Hub repo is not in the local HF cache fails instead of skipping. Gated repos (`GATED_REPOS`) and local checkpoint paths still skip. Load a tokenizer, processor, config or template through the `tests/common/tokenizers.py` helpers, and name its repo in `tests/common/models.py` so the seed carries it. |
 | `HALO_TEST_ATTN` / `HALO_TEST_GC` / `HALO_TEST_REVISION` | Attention implementation, gradient checkpointing (default **on**), hub revision for the suites that sweep them. The per-family `HALO_TEST_ZAYA_GC` defaults the other way — see the per-suite table. |
 | `HALO_TEST_OFFGRPO_PARALLEL` | `tp` (default, dense Qwen3) or `ep` (gpt-oss MoE) leg of `trainers/grpo/test_offline_grpo_tp_resume.py`. |
 | `HALO_TEST_MAX_STEPS`, `HALO_TEST_BATCH_SIZE`, `HALO_TEST_GRAD_ACCUM`, `HALO_TEST_NUM_GENERATIONS`, `HALO_TEST_NUM_WORKERS`, `HALO_TEST_MAX_CONCURRENT`, `HALO_TEST_ROLLOUT_MAX_TOKENS`, `HALO_TEST_MAX_COMPLETION` | Step count and rollout sizing for `trainers/grpo/test_environmental_grpo_benchmarks.py`, whose defaults are sized for one vLLM server. |
@@ -356,14 +374,19 @@ first-class content — report it with the reason.
 ## Submitting a PR
 
 1. **Get approved first** — an accepted issue plus a maintainer's `/approve @your-handle` on it. An un-approved PR is closed by
-   `pr-gate.yml`; reopen it once approved — the gate re-runs on reopen. Merging a PR adds you to the
-   allowlist, so the gate applies once. `/approve` assigns you to the issue, which keeps it open
-   while you work; an unassigned idle issue goes stale after 30 days and closes 7 days later.
-2. **Branch** off `main` — in your fork, unless you have write access. Every PR is squash-merged;
-   signed commits (SSH or GPG) are required only on branches of this repository, not in a fork.
-3. **Pass the gates.** `make lint`, `make format`, `make test-cpu` (plus `make test-gpu-core` for
-   GPU-affecting changes), `make docs`. Hosted CI runs `ruff`, `actionlint` and the docs link
-   check; the test tiers run locally, so report their result in the PR.
+   `pr-gate.yml`; once approved, reopen it, or ask on the issue and a maintainer will — the gate re-runs on
+   reopen. Merging a PR adds you to the allowlist, so the gate applies once. `/approve` assigns you to the
+   issue, which keeps it open while you work; an unassigned idle issue goes stale after 30 days and closes
+   7 days later.
+2. **Branch** off `main` — in your fork, unless you have write access. Every PR is squash-merged, and
+   every commit in it must carry a verified signature (SSH or GPG), forks included: GitHub does not
+   merge a PR while any of its commits lacks one. Re-sign earlier commits with
+   `git rebase --exec 'git commit --amend --no-edit -S' <base>` (the `main` commit the branch starts
+   from) and force-push; the one-time signing setup is in `CONTRIBUTING.md`.
+3. **Pass the gates.** `make lint`, `make format`, `make seed-hf-cache` (again when
+   `tests/common/models.py` or `examples/` gain a repo), then `make test-cpu` (plus
+   `make test-gpu-core` for GPU-affecting changes), `make docs`. Hosted CI runs `ruff`,
+   `actionlint` and the docs checks; the test tiers run locally, so report their result in the PR.
 4. **Fill the PR template** — what and why, type of change, Proof-of-Value evidence, checklist.
 5. **No secrets.** Never add `keys/`, `.env`, `*.pem`, or any credential.
 

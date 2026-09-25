@@ -38,24 +38,24 @@ Each `--models` entry is a **local directory**, optionally suffixed `:weight` (s
 | `--method` | `linear` | all | `linear` / `slerp` / `task_arithmetic` / `ties` |
 | `--base_model` | — | task_arithmetic, ties | Model the task vectors are relative to (required) |
 | `--dtype` | `bfloat16` | all | Output dtype (`float16` / `bfloat16` / `float32`; short aliases `fp16`/`bf16`/`fp32` accepted) |
-| `--density` | `0.6` | ties | Fraction of each task vector's deltas kept |
-| `--lambda` | `1.0` | ties | Scale of the merged delta onto the base |
-| `--t` | `0.5` | slerp | Interpolation factor in `[0, 1]` |
+| `--density` | `0.6` | ties | Fraction of each task vector's deltas kept, in `(0, 1]` |
+| `--lambda` | `1.0` | ties | Scale of the merged delta onto the base; any finite value |
+| `--t` | `0.5` | slerp | Interpolation factor, limited to `[0, 1]` |
 | `--tokenizer_source` | base, else first model | all | Where to copy config + tokenizer/processor from |
 | `--max_shard_size` | `5GB` | all | Per-file cap for the output safetensors shards |
 | `--allow_missing_tokenizer` | off | all | Accept a merged checkpoint whose `--tokenizer_source` ships no tokenizer files (refused by default) |
 | `--trust_remote_code` | on | all | Trust remote code when re-reading the merged config (`--no-trust_remote_code` to disable); needed for Bailing/Ling |
 | `--quiet` | off | all | Suppress per-key progress logging |
 
-The *Applies to* column is enforced, not advisory: a knob passed explicitly for a method that does not consume it is **rejected** before any I/O, so a refused merge leaves no output directory behind. Defaults resolve after that gate, so naming a knob at its documented default still counts as passing it.
+The *Applies to* column is enforced, not advisory: a knob passed explicitly for a method that does not consume it is **rejected** before any I/O, so a refused merge leaves no output directory behind. Defaults resolve after that gate, so naming a knob at its documented default still counts as passing it. A value outside the knob's range, or a non-finite `:weight`, is rejected at the same point: a `--density` outside `(0, 1]` would keep every delta, and a `--t` outside `[0, 1]` would extrapolate past both models.
 
 ## Memory and output
 
-Merging runs on CPU and streams the inputs **one tensor at a time** — each key is read from every model, merged, then released — so peak host memory is one fp32 copy of the largest tensor per contributing model plus the writer's pending output shard, never the merged model. Peak disk is the merged artifact, one input's size.
+Merging runs on CPU and streams the inputs **one tensor at a time** — each key is read from every model, merged, then released — so peak host memory is set by the costliest tensor (the largest, in practice), never the merged model: every input's copy of it as stored, the method's fp32 working copies of it, and the writer's pending output shard (`--max_shard_size`). `linear`, `task_arithmetic` and `slerp` hold 3, 4 and 5 working copies whatever the model count; `ties` holds 5.25 per model plus 5 (each delta, their stacked copy, the sign-masked copy, and the agreement mask with its int64 cast), so a TIES merge of four bf16 models onto a bf16 base, whose largest tensor has 1B elements, peaks near 120 GB. The tool warns before merging when this estimate exceeds the host's available RAM. Peak disk is the merged artifact, one input's size.
 
 The output is a standard HF checkpoint: sharded safetensors plus an index above `--max_shard_size` (5 GB by default), or a single `model.safetensors` with no index when it fits.
 
-Every non-weight file in `--tokenizer_source` is copied verbatim: config, tokenizer, the multimodal processor files, and any remote-code modules the config's `auto_map` names. The saved config's `dtype` is set to the merged dtype. A Hub id resolves to its local snapshot first and is copied the same way.
+Every non-weight file in `--tokenizer_source` is copied: config, tokenizer, the multimodal processor files, and any remote-code modules the config's `auto_map` names. Two are rewritten after the copy: the saved config's `dtype` is set to the merged dtype, and the `README.md` model card gains the `halo` Hub tag, or is created holding it ([Hub model card](checkpoints.md#hub-model-card)). A Hub id resolves to its local snapshot first and is copied the same way.
 
 The resume sidecars are the exception: `scheduler.pt`, `router_balancing_biases.pt` and `rng_state_*` describe one training run, which an N-way merge has none of, so they are dropped. The merged model therefore ships **no** balancing sidecar — a family whose balancing bias lives in a checkpoint slot keeps it through the merged weights, while a `bias_update_transient` run's bias is gone (see [Checkpoints](checkpoints.md#resume-by-parallelism-mode)).
 

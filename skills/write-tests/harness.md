@@ -170,14 +170,26 @@ those, kept separate only so the manifest can attach its family markers, timeout
 ## Ports, tolerances, reporting
 
 - **Ports** (`tests/common/ports.py`) — never hardcode `--master_port`. The launcher calls
-  `free_port()` (bind `:0`, dedup per process) and passes it via env; your script's
-  `init_distributed()` reads it. Hardcoded ports race across CI shards (`Errno 98`).
+  `free_port()` (a port below the kernel's ephemeral range, from this xdist worker's own slice
+  of the pool) and passes it via env; your script's `init_distributed()` reads it. A
+  CPU test that spawns ranks or starts a server takes its port from `free_port()` too. Hardcoded
+  ports race across CI shards (`Errno 98`). The pool runs from 20000 up to
+  `net.ipv4.ip_local_port_range`, so a host whose range starts less than one port per xdist
+  worker above 20000 raises `... leaves N test worker(s) no port`: move the range up to `32768 60999`
+  ([Troubleshooting](../../agent-docs/reference/troubleshooting.md) has the commands).
+- **Hub files** (`tests/common/tokenizers.py`) — load a real tokenizer, processor, config or
+  chat template through these helpers, and name its repo in `tests/common/models.py`. `make
+  seed-hf-cache` fetches a seed derived from that module and the `examples/` configs, and an
+  offline run over it fails a cache miss (`HALO_TEST_REQUIRE_HUB_CACHE`; see
+  [Contributing → Tests](../../agent-docs/contributing/README.md#tests)).
 - **Tolerances** (`tests/common/tolerances.py`) — `from tests.common.tolerances import TOL`,
   then use the named constant: `TOL.rank_loss_consistency_abs`, `TOL.tp_grad_norm_spread_abs`,
   `TOL.parallel_vs_baseline_loss_abs`, `TOL.parallel_vs_baseline_train_loss_abs`,
   `TOL.ep_rank_loss_abs`, `TOL.logprob_atol/rtol`, `TOL.weight_atol`, `TOL.resume_loss_abs`,
   `TOL.grad_norm_rel`, `TOL.kernel_atol/rtol`. Never re-inline a literal — the name is the
-  contract.
+  contract. An EP-vs-reference gradient test scores its `name -> (EP grad, reference)` pairs with
+  `tests.common.ep_reference.score_ep_grad_pairs(pairs, checks, metrics, cos_min=TOL.ep_grad_cosine_min)`;
+  its norm-ratio band defaults to `TOL.ep_grad_norm_ratio_band`.
 - **Reporting** (`tests/common/reporting.py`):
   - Correctness: `ctx.metrics(trainer)` → `snapshot_efficiency(cb)` flat dict. Headline at
     top level: `tokens_per_second` (per-GPU), `cluster_tokens_per_second`, `peak_allocated_gb`,

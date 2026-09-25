@@ -56,6 +56,7 @@ changes.
 | `src/checkpoint/adapters.py` (saved-PEFT file layout, expert-LoRA shape gates, merge-into-base) | `agent-docs/optimization/peft.md`, `agent-docs/reference/checkpoints.md`, `agent-docs/reference/scripts-reference.md` |
 | `src/checkpoint/tool_io.py` (tool-side checkpoint walks, input gates, staged publish, training-state sidecars), `src/checkpoint/fp8_dequant.py` (streaming fp8 → bf16) | `agent-docs/reference/checkpoints.md`, `agent-docs/reference/scripts-reference.md` |
 | `src/checkpoint/shard_writer.py` (`StageShardWriter`: incremental safetensors parts + index) | `agent-docs/reference/checkpoints.md` |
+| `src/checkpoint/model_card.py` (`HUB_TAGS`, `tag_model_card` / `tag_exported_model_card`: the `halo` Hub tag on the model card of every checkpoint Halo writes, tool conversions included) | `agent-docs/reference/checkpoints.md` (Hub model card), `human-docs/checkpoints.md` (upload) |
 | `src/distributed/checkpoint/write.py` (the collective half of a write: retain-gated DTensor resolve of params and buffers with neutralized sinks, the streamed part writer, the shard-index exchange) | `agent-docs/reference/checkpoints.md`, `agent-docs/parallelism/data-parallelism.md` |
 | `src/models/structure.py` (module-tree introspection: unwrap, PEFT names, decoder layers, norms) | `agent-docs/reference/checkpoints.md`, `agent-docs/parallelism/data-parallelism.md` |
 | `src/distributed/fsdp.py` (FSDP2 wrapping + reshard) | `agent-docs/parallelism/data-parallelism.md`, `agent-docs/reference/checkpoints.md` |
@@ -162,14 +163,14 @@ changes.
 | `scripts/_common.py` (the checkpoint tools' shared flags: shard cap, Hub source block, `--trust_remote_code`) | `agent-docs/reference/scripts-reference.md` |
 | `scripts/after_training/merge_ep_shards.py` | `agent-docs/reference/checkpoints.md` |
 | `scripts/after_training/{quantize_to_lowp,convert_to_bf16}.py` | `agent-docs/optimization/low-precision-moe-kernels.md` |
-| `scripts/after_training/merge_models.py` | `agent-docs/reference/scripts-reference.md` |
+| `scripts/after_training/merge_models.py` | `agent-docs/reference/model-merging.md`, `agent-docs/reference/scripts-reference.md` |
 | `Dockerfile*`, `docker-compose*`, `docker/sglang/patches/` | `agent-docs/infrastructure/docker.md`; `Dockerfile.vllm`/`Dockerfile.sglang` + their compose files and server patches (EFA overlays included) also `agent-docs/infrastructure/rollout-servers.md` |
 | `docker/efa/install_efa_userspace.sh` (the EFA userspace every image shares) | `agent-docs/infrastructure/docker.md` (RDMA networking), `agent-docs/infrastructure/rollout-servers.md` (Servers on other nodes), `agent-docs/parallelism/multi-node.md` (RDMA fabrics) |
 | AWS / S3 auth, `src/data/sources/s3_client.py` paths | `agent-docs/infrastructure/aws-auth.md`, `agent-docs/data/s3-utilities.md` |
 | DeepEP install / NVSHMEM / CDMC notes | `agent-docs/infrastructure/deepep.md` |
 | multi-node / SkyPilot / RunPod / Nomad launch | `agent-docs/parallelism/multi-node.md`, `agent-docs/infrastructure/{skypilot,runpod,nomad}.md` |
 | `launcher-configs/**` (SkyPilot task YAMLs, Nomad job specs, accelerate configs) | `agent-docs/infrastructure/{skypilot,nomad}.md`, `human-docs/clusters.md` |
-| `.github/workflows/**` (lint, docs, GPU tier), `Makefile` test targets | `agent-docs/infrastructure/ci.md`; tier composition lives in `agent-docs/contributing/README.md` ("Tests") |
+| `.github/workflows/**` (lint, docs, CPU and GPU tiers), `Makefile` test targets, `tests/common/hub_seed.py` | `agent-docs/infrastructure/ci.md`; tier composition lives in `agent-docs/contributing/README.md` ("Tests") |
 
 ## Cross-cutting
 

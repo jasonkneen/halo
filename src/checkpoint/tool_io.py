@@ -20,7 +20,7 @@ from typing import Any
 import torch
 from accelerate.utils import is_peft_model
 from huggingface_hub import snapshot_download
-from safetensors import safe_open
+from safetensors import SafetensorError, safe_open
 from transformers.core_model_loading import PrefixChange
 from transformers.integrations.finegrained_fp8 import Fp8Dequantize
 from transformers.utils import CONFIG_NAME, GENERATION_CONFIG_NAME
@@ -332,7 +332,7 @@ def _reject_indexless_ep_shards(checkpoint_dir: str) -> None:
     try:
         with safe_open(shards[0], framework="pt") as reader:
             partial = next((key for key in reader.keys() if EP_SHARD_KEY_RE.match(key)), None)  # noqa: SIM118
-    except Exception:
+    except (SafetensorError, OSError):
         return
     if partial is not None:
         raise ValueError(
@@ -546,9 +546,19 @@ def iter_checkpoint_tensors(
             yield key, reader.get_tensor(key)
 
 
+def header_numel(header) -> int:
+    """Element count of a tensor from its ``safe_open`` slice header alone (no data read)."""
+    return math.prod(header.get_shape())
+
+
 def header_nbytes(header) -> int:
     """Storage size of a tensor from its ``safe_open`` slice header alone (no data read)."""
-    return math.prod(header.get_shape()) * _SAFETENSORS_DTYPE_BYTES.get(header.get_dtype(), 2)
+    return header_numel(header) * _SAFETENSORS_DTYPE_BYTES.get(header.get_dtype(), 2)
+
+
+def stored_tensor_numel(reader, key: str) -> int:
+    """Element count of one tensor in an open ``safe_open`` reader, from the header alone (no data read)."""
+    return header_numel(reader.get_slice(key))
 
 
 def stored_tensor_nbytes(reader, key: str) -> int:

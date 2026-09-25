@@ -275,8 +275,8 @@ docker pull public.ecr.aws/whitecircle/halo:sglang-0.5.17
 ```
 
 Each moving tag has immutable SemVer pins (`blackwell-1.0.0`); there is deliberately no `latest` — it
-would let a Hopper host silently pull a Blackwell image. Roll back by pulling a pinned tag and
-retagging locally:
+would let a Hopper host silently pull a Blackwell image. Pin a release by pulling its versioned tag
+and retagging locally:
 
 ```bash
 docker pull public.ecr.aws/whitecircle/halo:hopper-1.0.0
@@ -286,6 +286,11 @@ docker tag  public.ecr.aws/whitecircle/halo:hopper-1.0.0 halo:hopper
 Maintainers publish with `make push-public-all` (`ecr-public-login` + the four `push-public-*`
 targets). To host the images in your own registry, `docker tag` and `docker push` the locally built
 images wherever you like — the build is credential-free, so nothing sensitive rides along.
+
+`tests/cpu/config/test_release_version_in_sync.py` holds every statement of the release to
+`pyproject.toml`'s `[project] version`: its `uv.lock` entry, the `Makefile` `VERSION` default, each
+Dockerfile's `ARG VERSION`, `CITATION.cff`'s `version`, the README's newest release entry (dated as
+`CITATION.cff`'s `date-released`), and every documented `-X.Y.Z` image pin.
 
 ## Verifying and debugging
 
